@@ -88,6 +88,35 @@ npm install
 npm run build:native
 ```
 
+### 三个常用命令
+
+| 命令 | 用途 |
+|---|---|
+| `npm run build` | 构建一次（先清空 `dist/`） |
+| `npm start` | 启动构建产物 |
+| `npm run dev` | 开发模式：监听改动并自动重启 |
+| `npm test` | 58 项测试，不需要打印机 |
+
+**为什么需要构建**：NestJS 通过 `design:paramtypes` 元数据解析依赖注入，
+而该元数据只能由 `tsc` 生成——Node 的类型擦除与 esbuild 都会丢弃它
+（实测：带装饰器的 `.ts` 直接运行会报错）。因此开发模式也用 `tsc --watch`，
+而不是直接运行 TypeScript。
+
+未构建就执行 `npm start` 会给出提示而不是堆栈：
+
+```
+未找到构建产物 dist/main.js
+
+NestJS 依赖装饰器元数据，需要先构建：
+
+    npm run build     # 构建一次
+    npm start         # 然后启动
+
+开发时用以下命令，它会监听改动并自动重启：
+
+    npm run dev
+```
+
 ---
 
 ## 快速开始

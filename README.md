@@ -22,9 +22,18 @@
 
 ```bash
 npm install          # 会自动编译原生蓝牙模块
-npm run build        # NestJS 需要构建（装饰器无法由类型擦除处理）
+npm run build        # NestJS 需要构建（装饰器元数据无法由类型擦除生成）
 npm start            # http://127.0.0.1:8000
 ```
+
+开发时用 `npm run dev`：监听源码改动、增量编译、**自动重启服务**。
+
+| 命令 | 用途 |
+|---|---|
+| `npm run build` | 构建一次（清空 `dist/` 后编译） |
+| `npm start` | 启动构建产物；未构建时给出可操作的提示 |
+| `npm run dev` | 开发模式：监听改动 + 自动重启 |
+| `npm test` | 58 项测试，离线运行 |
 
 启动时会自动发现打印机：
 
