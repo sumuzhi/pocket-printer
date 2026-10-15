@@ -2,3 +2,6 @@ node_modules/
 native/build/
 *.log
 .DS_Store
+
+# 构建产物（由 npm run build 生成）
+dist/

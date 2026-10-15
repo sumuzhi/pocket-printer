@@ -12,7 +12,6 @@
  */
 
 import {
-  BadRequestException,
   Controller,
   Get,
   HttpCode,
@@ -21,22 +20,24 @@ import {
   Post,
   Res,
   Sse,
-  MessageEvent,
 } from '@nestjs/common'
-import { Observable, interval, map, takeWhile, merge } from 'rxjs'
+import type { MessageEvent } from '@nestjs/common'
+import { Observable, filter, map, merge, of, takeWhile } from 'rxjs'
 import type { Response } from 'express'
 
 import { PrinterService } from './printer.service.ts'
 import type { PrintJob, PrinterStatus } from './printer.service.ts'
-import { StagingService, MAX_IMAGE_KB } from './staging.service.ts'
+import { StagingService } from './staging.service.ts'
 import { addonBuilt } from './bluetooth.ts'
-import { VERSION } from '../version.ts'
+import { BadInputError } from '../common/errors.ts'
+import { ConfigService } from '@nestjs/config'
 
 @Controller('api')
 export class PrinterController {
   constructor(
     private readonly printer: PrinterService,
     private readonly staging: StagingService,
+    private readonly config: ConfigService,
   ) {}
 
   // ------------------------------------------------------------------ probes
@@ -45,11 +46,11 @@ export class PrinterController {
   health() {
     return {
       ok: true,
-      version: VERSION,
+      version: this.config.get<string>('version'),
       runtime: `node ${process.version}`,
       role: 'print-only',
       job: { width: 1200, height: 1800 },
-      maxImageKb: MAX_IMAGE_KB,
+      maxImageKb: this.config.get<number>('maxImageKb'),
       asyncPrint: true,
     }
   }
@@ -77,20 +78,17 @@ export class PrinterController {
 
   @Post('print')
   @HttpCode(202)
-  async startPrint(@Res({ passthrough: true }) res: Response): Promise<PrintJob> {
+  startPrint(@Res({ passthrough: true }) res: Response): PrintJob {
     const info = this.staging.info()
     if (!info) {
-      throw new BadRequestException('尚未暂存成片，请先 POST /api/stage')
+      throw new BadInputError('尚未暂存成片，请先 POST /api/staged')
     }
-    try {
-      const job = this.printer.startPrint(info.path, info.sourceName)
-      // 202 Accepted: the work has started but is not done.
-      res.setHeader('Location', `/api/print/${job.id}`)
-      return job
-    } catch (e) {
-      // "Printer busy" is a conflict, not a client error.
-      throw new BadRequestException(e instanceof Error ? e.message : String(e))
-    }
+    // The service throws ConflictError when busy; DomainExceptionFilter maps it
+    // to 409. Controllers do not translate errors — that lives in one place.
+    const job = this.printer.startPrint(info.path, info.sourceName)
+    // 202 Accepted: the work has started but is not done.
+    res.setHeader('Location', `/api/print/${job.id}`)
+    return job
   }
 
   @Get('print')
@@ -108,51 +106,28 @@ export class PrinterController {
   /**
    * Stream job progress as Server-Sent Events.
    *
-   * Polls internally rather than pushing from the job runner, so the SSE layer
-   * has no coupling to the print code and cannot miss or duplicate events.
+   * Event-driven: `PrinterService` publishes each state change and this filters
+   * that stream to one job. The previous version polled the job map once per
+   * second per subscriber, which reported changes up to a second late and kept
+   * ticking for as long as anyone was listening.
+   *
+   * The first emission is the job's current state, so a client that subscribes
+   * mid-print sees where things stand instead of waiting for the next change.
    */
   @Sse('print/:id/events')
   jobEvents(@Param('id') id: string): Observable<MessageEvent> {
     const initial = this.printer.getJob(id)
     if (!initial) throw new NotFoundException(`没有任务 ${id}`)
 
-    const poll = interval(1000).pipe(
-      map(() => this.printer.getJob(id)),
-      takeWhile((job) => {
-        // Stop when the job reaches a terminal state (the final event is
-        // emitted by the `merge` below before this completes).
-        return !!job && !isTerminal(job.state)
-      }, true),
-      map((job) => ({ data: job } as MessageEvent)),
+    return merge(
+      // Where the job is right now.
+      of(initial),
+      // Every subsequent change, until it reaches a terminal state.
+      this.printer.watch().pipe(filter((job) => job.id === id)),
+    ).pipe(
+      takeWhile((job) => !isTerminal(job.state), true),
+      map((job) => ({ data: job }) as MessageEvent),
     )
-
-    // Emit the current state immediately so a client that subscribes late is
-    // not left waiting a full second for the first update.
-    const first: Observable<MessageEvent> = new Observable((subscriber) => {
-      subscriber.next({ data: initial } as MessageEvent)
-      subscriber.complete()
-    })
-
-    return merge(first, poll)
-  }
-
-  // ------------------------------------------------------------------ staged
-
-  @Get('staged')
-  staged() {
-    const info = this.staging.info()
-    if (!info) throw new NotFoundException('尚未生成成片')
-    const { path: _path, ...rest } = info
-    return { ok: true, ...rest }
-  }
-
-  @Get('staged/image')
-  async stagedImage(@Res() res: Response): Promise<void> {
-    const bytes = await this.staging.read()
-    if (!bytes) throw new NotFoundException('尚未生成成片')
-    res.setHeader('content-type', 'image/jpeg')
-    res.setHeader('content-length', String(bytes.length))
-    res.end(bytes)
   }
 }
 

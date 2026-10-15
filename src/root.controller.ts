@@ -3,16 +3,18 @@
  * instead of a 404. This service has no UI by design.
  */
 import { Controller, Get } from '@nestjs/common'
-
-import { VERSION } from './version.ts'
+import { ConfigService } from '@nestjs/config'
 
 @Controller()
 export class RootController {
+  constructor(private readonly config: ConfigService) {}
+
   @Get()
   index() {
+    const version = this.config.get<string>('version')
     return {
       service: '口袋打印机 · 送印服务',
-      version: VERSION,
+      version,
       note: '本服务只负责送印，不做任何图像处理。成片须为 1200×1800 的 JPEG。',
       endpoints: [
         'GET    /api/health',

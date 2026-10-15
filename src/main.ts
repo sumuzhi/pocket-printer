@@ -9,10 +9,10 @@
  * type stripping cannot emit the decorator metadata they rely on.
  */
 import 'reflect-metadata'
-import { NestFactory } from '@nestjs/core'
 import { Logger } from '@nestjs/common'
+import { ConfigService } from '@nestjs/config'
 
-import { AppModule } from './app.module.ts'
+import { createApplication } from './bootstrap.ts'
 import { addonBuilt, listCandidates } from './printer/bluetooth.ts'
 
 interface Args {
@@ -50,35 +50,33 @@ function parseArgs(argv: string[]): Args {
 async function bootstrap(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
 
-  // The address must be set before any service reads it.
+  // CLI flags take precedence over the environment. They are written back into
+  // `process.env` before the module is created, because `ConfigModule.forRoot`
+  // reads the environment exactly once at startup.
   if (args.address) process.env.PRINTER_ADDRESS = args.address
+  if (args.port) process.env.PORT = String(args.port)
+  if (args.host) process.env.HOST = args.host
+  if (args.verbose) process.env.VERBOSE = '1'
 
-  const app = await NestFactory.create(AppModule, {
-    logger: args.verbose
-      ? ['log', 'error', 'warn', 'debug', 'verbose']
-      : ['log', 'error', 'warn'],
-    // Disable the default body parsers (json + urlencoded).
-    //
-    // They consume the request stream, and the only endpoint that takes a body
-    // — POST /api/staged — reads the RAW jpeg bytes off that stream itself. With
-    // the parsers active the stream is already drained, so the handler waited
-    // forever and the request hung.
-    //
-    // Nothing here needs parsed bodies, so turning them off is both the fix and
-    // the simplest configuration.
-    bodyParser: false,
-  })
-  app.enableShutdownHooks()
-  await app.listen(args.port, args.host)
+  const app = await createApplication(args.verbose)
+
+  // Configuration is read through ConfigService, not from `process.env` or from
+  // the CLI args directly — bootstrap only maps flags into the environment.
+  const config = app.get(ConfigService)
+  const port = config.getOrThrow<number>('port')
+  const host = config.getOrThrow<string>('host')
+
+  await app.listen(port, host)
 
   const built = addonBuilt()
   const out = process.stdout
   out.write(`口袋打印机 · 送印服务（Node ${process.version}，NestJS）\n`)
-  out.write(`  地址: http://${args.host}:${args.port}\n`)
+  out.write(`  地址: http://${host}:${port}\n`)
+  const configuredAddress = config.get<string | undefined>('printerAddress')
   if (!built) {
     out.write(`  蓝牙: ⚠ 原生模块未编译 —— 请运行 npm run build:native\n`)
-  } else if (args.address) {
-    out.write(`  蓝牙: 使用指定地址 ${args.address}\n`)
+  } else if (configuredAddress) {
+    out.write(`  蓝牙: 使用指定地址 ${configuredAddress}\n`)
   } else {
     let found: Array<{ address: string; name: string }> = []
     try {

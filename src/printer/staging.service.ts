@@ -11,6 +11,8 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common'
+
+import { BadInputError, PayloadTooLargeError } from '../common/errors.ts'
 import { readFile, stat, writeFile, unlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -29,14 +31,7 @@ export interface StagedImage {
   path: string
 }
 
-export class StagingError extends Error {
-  constructor(
-    message: string,
-    readonly status: number,
-  ) {
-    super(message)
-  }
-}
+
 
 @Injectable()
 export class StagingService {
@@ -52,16 +47,15 @@ export class StagingService {
    */
   async stage(raw: Buffer, sourceName: string): Promise<StagedImage> {
     if (!raw.length) {
-      throw new StagingError('没有收到图片数据', 400)
+      throw new BadInputError('没有收到图片数据')
     }
     if (raw.length > MAX_IMAGE_BYTES) {
-      throw new StagingError(
+      throw new PayloadTooLargeError(
         `成片 ${Math.round(raw.length / 1024)}KB 超过上限 ${MAX_IMAGE_KB}KB。请降低导出质量后重试。`,
-        413,
       )
     }
     if (!(raw[0] === 0xff && raw[1] === 0xd8)) {
-      throw new StagingError('成片必须是 JPEG（未检测到 JPEG 文件头）', 400)
+      throw new BadInputError('成片必须是 JPEG（未检测到 JPEG 文件头）')
     }
 
     await writeFile(STAGE_FILE, raw)

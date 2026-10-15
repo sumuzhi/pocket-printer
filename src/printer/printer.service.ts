@@ -16,11 +16,13 @@
  */
 
 import { Injectable, Logger } from '@nestjs/common'
+import { Observable, Subject } from 'rxjs'
 import { readFile } from 'node:fs/promises'
 
 import { BluetoothLink, addonBuilt, addonPath, listCandidates } from './bluetooth.ts'
 import { PrintSession, PrinterError, JOB_TYPE } from './session.ts'
 import { frameCountFor } from './protocol.ts'
+import { ConflictError } from '../common/errors.ts'
 
 export type JobState = 'queued' | 'transferring' | 'printing' | 'finished' | 'failed' | 'cancelled'
 
@@ -69,6 +71,21 @@ export class PrinterService {
 
   /** The currently running job id, if any. */
   private activeJob: string | null = null
+
+  /**
+   * Emits every job update, for subscribers (SSE) to observe.
+   *
+   * The alternative — having the SSE endpoint poll the job map on a timer —
+   * works but wastes a tick per subscriber per second and reports state changes
+   * up to a second late. Publishing changes makes the stream event-driven and
+   * exactly as timely as the job itself.
+   */
+  private readonly updates = new Subject<PrintJob>()
+
+  /** Observe job changes. Each emission is the job's current state. */
+  watch(): Observable<PrintJob> {
+    return this.updates.asObservable()
+  }
 
   /**
    * Run `fn` with exclusive access to the printer.
@@ -167,7 +184,7 @@ export class PrinterService {
    */
   startPrint(imagePath: string, sourceName: string): PrintJob {
     if (this.activeJob) {
-      throw new PrinterError(`打印机忙：正在处理任务 ${this.activeJob}`)
+      throw new ConflictError(`打印机忙：正在处理任务 ${this.activeJob}`)
     }
 
     const job: PrintJob = {
@@ -191,13 +208,21 @@ export class PrinterService {
     return job
   }
 
+  /** Record a state change and notify subscribers. */
+  private update(job: PrintJob, patch: Partial<PrintJob>): void {
+    Object.assign(job, patch)
+    this.updates.next({ ...job })
+  }
+
   private async executeJob(job: PrintJob, imagePath: string): Promise<void> {
     try {
       const file = await readFile(imagePath)
-      job.bytes = file.length
-      job.frames = frameCountFor(file.length)
-      job.startedAt = Date.now()
-      job.state = 'transferring'
+      this.update(job, {
+        bytes: file.length,
+        frames: frameCountFor(file.length),
+        startedAt: Date.now(),
+        state: 'transferring',
+      })
 
       const result = await this.run('print', async (s) => {
         const before = await s.status()
@@ -206,40 +231,40 @@ export class PrinterService {
         }
 
         const printerJobId = await s.createJob(file.length, 1, JOB_TYPE.PHOTO)
-        job.printerJobId = printerJobId
-        job.progress = 0.1
+        this.update(job, { printerJobId, progress: 0.1 })
 
         await s.sendFile(file, printerJobId)
-        job.progress = 0.5
-        job.state = 'printing'
+        this.update(job, { progress: 0.5, state: 'printing' })
 
         // Poll until finished; report progress from the printer's own counters.
         const final = await s.waitForJob(printerJobId, {
           timeoutMs: 180_000,
           intervalMs: 3_000,
           onTick: (t) => {
-            job.state = t.state === 'finished' ? 'finished' : 'printing'
-            job.printTimeMs = t.printTime
-            // The transfer is done by now, so progress reflects printing.
-            job.progress = 0.5
+            this.update(job, {
+              state: t.state === 'finished' ? 'finished' : 'printing',
+              printTimeMs: t.printTime,
+              // The transfer is done by now, so progress reflects printing.
+              progress: 0.5,
+            })
           },
         })
         return { printerJobId, final }
       })
 
-      job.state = result.final.state === 'finished' ? 'finished' : 'failed'
-      if (job.state === 'failed') {
-        job.error = `任务未确认完成（${result.final.state}）`
+      const done: Partial<PrintJob> = {
+        state: result.final.state === 'finished' ? 'finished' : 'failed',
+        progress: 1,
+        printTimeMs: result.final.printTime,
+        finishedAt: Date.now(),
       }
-      job.progress = 1
-      job.printTimeMs = result.final.printTime
-      job.finishedAt = Date.now()
+      if (done.state === 'failed') done.error = `任务未确认完成（${result.final.state}）`
+      this.update(job, done)
       this.log.log(`任务 ${job.id} 结束：${job.state}（打印机任务 ${result.printerJobId}）`)
     } catch (e) {
-      job.state = 'failed'
-      job.error = e instanceof Error ? e.message : String(e)
-      job.finishedAt = Date.now()
-      this.log.warn(`任务 ${job.id} 失败：${job.error}`)
+      const error = e instanceof Error ? e.message : String(e)
+      this.update(job, { state: 'failed', error, finishedAt: Date.now() })
+      this.log.warn(`任务 ${job.id} 失败：${error}`)
     }
   }
 

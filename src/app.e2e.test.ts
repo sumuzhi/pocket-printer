@@ -10,18 +10,19 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
-import { Test } from '@nestjs/testing'
 import type { INestApplication } from '@nestjs/common'
 import request from 'supertest'
 
-import { AppModule } from './app.module.ts'
+import { createApplication } from './bootstrap.ts'
 import { MAX_IMAGE_KB } from './printer/staging.service.ts'
 
 let app: INestApplication
 
 beforeAll(async () => {
-  const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile()
-  app = moduleRef.createNestApplication({ bodyParser: false })
+  // Built through the same bootstrap as production, so the body parsers and
+  // filters under test are the ones that actually run. A test-only app
+  // configuration would let real misconfiguration pass unnoticed.
+  app = await createApplication()
   await app.init()
 })
 
