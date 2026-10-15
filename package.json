@@ -1,0 +1,31 @@
+{
+  "name": "pocket-printer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "米家口袋打印机 Pro 的独立送印服务：不进入米家 App，直接通过蓝牙打印照片",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "os": [
+    "darwin"
+  ],
+  "scripts": {
+    "start": "node src/index.ts",
+    "dev": "node --watch src/index.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "build:native": "node-gyp configure build --directory=native",
+    "postinstall": "npm run build:native"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "node-gyp": "^11.0.0",
+    "typescript": "^5.7.2",
+    "vitest": "^5.0.4"
+  }
+}
