@@ -120,11 +120,10 @@ node verify-print.mjs <1200x1800.jpg> --yes-consume-one-sheet
 ### 复现方式
 
 ```bash
-cd server
-node verify-print.mjs <image.jpg>    # 消耗一张相纸
+node verify-print.mjs <image.jpg> --yes-consume-one-sheet   # 消耗一张相纸
 ```
 
-此脚本保留在仓库中，协议若有改动可重复验证。
+脚本要求显式确认参数，避免误触。协议若有改动可重复验证。
 
 # 附：无 token / 无账号的验证
 

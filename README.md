@@ -35,6 +35,8 @@ npm start            # http://127.0.0.1:8000
         ...
 ```
 
+> 更详细的使用说明（含故障排查、语言示例）见 **[docs/USAGE.md](docs/USAGE.md)**。
+
 ## 用法
 
 ```bash
@@ -174,10 +176,11 @@ Node 主线程跑 libuv 而非 CFRunLoop，所以朴素写法的插件**一个�
 - 原生 `connect()` 是**同步**的，打印机不可达时那次请求会阻塞约 15 秒。
   这是为了规避 CFRunLoop 跨线程问题而做的取舍。
 
-## 协议文档
+## 文档
 
 | 文档 | 内容 |
 |---|---|
+| **[docs/USAGE.md](docs/USAGE.md)** | **使用指南：安装、接口参考、故障排查** |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | 帧格式、DH 握手、加密、分片 |
 | [docs/REVERSE-ENGINEERING.md](docs/REVERSE-ENGINEERING.md) | 协议还原过程与证据 |
 | [docs/VERIFICATION.md](docs/VERIFICATION.md) | 真机验证记录 |

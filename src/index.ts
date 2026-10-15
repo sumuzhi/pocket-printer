@@ -47,7 +47,7 @@ server.listen(args.port, args.host, () => {
   process.stdout.write(`口袋打印机 · 送印服务（Node ${process.version}）\n`)
   process.stdout.write(`  地址: http://${args.host}:${args.port}\n`)
   if (!built) {
-    process.stdout.write(`  蓝牙: ⚠ 原生模块未编译 —— cd server/native && npx node-gyp build\n`)
+    process.stdout.write(`  蓝牙: ⚠ 原生模块未编译 —— 请运行 npm run build:native\n`)
   } else if (args.address) {
     process.stdout.write(`  蓝牙: 使用指定地址 ${args.address}\n`)
   } else {

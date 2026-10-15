@@ -90,7 +90,7 @@ function loadAddon(): NativeModule {
   if (!existsSync(path)) {
     throw new Error(
       `原生蓝牙模块尚未编译（缺少 ${path}）。\n` +
-        `请运行：cd server/native && npx node-gyp configure build`,
+        `请运行：npm run build:native`,
     )
   }
   return require(path) as NativeModule

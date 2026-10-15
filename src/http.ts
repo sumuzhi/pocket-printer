@@ -14,6 +14,7 @@
 import { createServer } from 'node:http'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { writeFileSync } from 'node:fs'
@@ -22,6 +23,21 @@ import { BluetoothLink, addonBuilt, addonPath, listCandidates } from './bluetoot
 import { PrintSession, PrinterError } from './session.ts'
 
 /** Mirrors the plugin's `imageSizeQualityCompress` default (2048 KB). */
+/**
+ * Service version, read from package.json so the two cannot drift apart.
+ * (They did: the endpoint reported 3.0.0 while the manifest said 1.0.0.)
+ */
+export const VERSION: string = (() => {
+  try {
+    const pkg = JSON.parse(
+      readFileSync(join(import.meta.dirname, '..', 'package.json'), 'utf8'),
+    ) as { version?: string }
+    return pkg.version ?? '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
+})()
+
 export const MAX_IMAGE_KB = 2048
 const MAX_IMAGE_BYTES = MAX_IMAGE_KB * 1024
 
@@ -109,7 +125,7 @@ export function createApp(opts: ServerOptions = {}) {
     if (path === '/api/health' && method === 'GET') {
       return sendJson(res, 200, {
         ok: true,
-        version: '3.0.0',
+        version: VERSION,
         runtime: `node ${process.version}`,
         role: 'print-only',
         job: { width: JOB_WIDTH, height: JOB_HEIGHT },
@@ -135,7 +151,7 @@ export function createApp(opts: ServerOptions = {}) {
           available: built,
           configured: Boolean(process.env.PRINTER_ADDRESS),
           candidates,
-          message: built ? undefined : '原生蓝牙模块未编译：cd server/native && npx node-gyp build',
+          message: built ? undefined : '原生蓝牙模块未编译，请运行：npm run build:native',
         },
         phone: { online: false }, // the phone relay is not part of this service
         busy,
@@ -261,7 +277,7 @@ export function createApp(opts: ServerOptions = {}) {
         const hint = msg.includes('不可达')
           ? '打印机不可达：请确认已开机'
           : msg.includes('原生蓝牙模块')
-            ? '请先编译原生模块：cd server/native && npx node-gyp build'
+            ? '请先编译原生模块：npm run build:native'
             : ''
         return sendJson(res, 200, { ok: false, message: hint || msg })
       }
