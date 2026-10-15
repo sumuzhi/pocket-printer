@@ -54,6 +54,16 @@ export const FALLBACK_ADDRESS = ''
  */
 export const RFCOMM_CHANNEL = 1
 
+/**
+ * Total budget for trying candidates during discovery.
+ *
+ * The printer is normally first in the list (name match), so a healthy setup
+ * finishes in well under a second. This bound exists for the unhealthy case:
+ * a sleeping printer plus several paired devices used to consume 90s+ before
+ * failing, which is longer than most HTTP clients wait.
+ */
+const DISCOVERY_BUDGET_MS = 20_000
+
 interface NativeRfcomm {
   connect(address: string, channel: number): boolean
   write(buf: Buffer): number
@@ -76,9 +86,15 @@ interface NativeModule {
 
 const require = createRequire(import.meta.url)
 
-/** Path of the compiled addon, for diagnostics. */
+/**
+ * Path of the compiled addon.
+ *
+ * Resolved from this file's directory up to the project root, so it works both
+ * from `src/printer/` (dev) and `dist/printer/` (built) — both are two levels
+ * below the root.
+ */
 export function addonPath(): string {
-  return resolve(import.meta.dirname, '../native/build/Release/iobt_rfcomm.node')
+  return resolve(import.meta.dirname, '../../native/build/Release/iobt_rfcomm.node')
 }
 
 export function addonBuilt(): boolean {
@@ -185,7 +201,16 @@ export class BluetoothLink extends EventEmitter {
    */
   private async openFirstWorking(candidates: PairedDevice[]): Promise<boolean> {
     const mod = loadAddon()
+    // Each candidate can block up to ~15s waiting for the baseband link (the
+    // native connect is synchronous and bounded there). With several paired
+    // devices that adds up fast — a status probe against a sleeping printer
+    // took over 90s and timed out the HTTP client. Cap the whole search.
+    const deadline = Date.now() + DISCOVERY_BUDGET_MS
     for (const c of candidates) {
+      if (Date.now() >= deadline) {
+        if (this.verbose) process.stderr.write(`  发现超时（预算 ${DISCOVERY_BUDGET_MS}ms 已用完）\n`)
+        break
+      }
       if (this.verbose) process.stderr.write(`  尝试 ${c.address} (${c.name})…\n`)
       const r = new mod.Rfcomm()
       try {

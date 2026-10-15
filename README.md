@@ -13,7 +13,7 @@
 
 | 依赖 | 说明 |
 |---|---|
-| Node.js ≥ 22 | 直接运行 TypeScript，无需构建步骤 |
+| Node.js ≥ 22 | 运行构建产物（NestJS 需要构建，见下） |
 | macOS | 蓝牙经典串口 |
 | Xcode 命令行工具 | 编译原生模块（`xcode-select --install`） |
 | 已配对的打印机 | 「系统设置 → 蓝牙」里配对一次 |
@@ -22,6 +22,7 @@
 
 ```bash
 npm install          # 会自动编译原生蓝牙模块
+npm run build        # NestJS 需要构建（装饰器无法由类型擦除处理）
 npm start            # http://127.0.0.1:8000
 ```
 
@@ -44,14 +45,20 @@ npm start            # http://127.0.0.1:8000
 curl http://127.0.0.1:8000/api/printer/status
 
 # 2. 暂存成片（必须是 1200×1800 的 JPEG）
-curl -X POST http://127.0.0.1:8000/api/stage \
+curl -X POST http://127.0.0.1:8000/api/staged \
      -H 'content-type: image/jpeg' \
      --data-binary @photo.jpg
 
-# 3. 打印（消耗一张相纸）
-curl -X POST http://127.0.0.1:8000/api/print \
-     -H 'content-type: application/json' \
-     -d '{"channel":"mac"}'
+# 3. 开始打印（消耗一张相纸）—— 立即返回任务对象
+curl -X POST http://127.0.0.1:8000/api/print
+# → 202 {"id":"job-xxx","state":"queued","progress":0}
+
+# 4. 查询进度（打印约需 75 秒）
+curl http://127.0.0.1:8000/api/print/job-xxx
+# → {"state":"printing","progress":0.5,...}
+
+# 或订阅 SSE，自动推送状态变化
+curl -N http://127.0.0.1:8000/api/print/job-xxx/events
 ```
 
 ### 接口
@@ -61,10 +68,13 @@ curl -X POST http://127.0.0.1:8000/api/print \
 | `GET` | `/api/health` | 服务信息、成片尺寸、大小上限 |
 | `GET` | `/api/device` | 蓝牙可用性 + 发现的候选设备 |
 | `GET` | `/api/printer/status` | 握手、电量、固件、纸张状态（只读） |
-| `POST` | `/api/stage` | 暂存成片字节（原样保存，不重新编码） |
+| `POST` | `/api/staged` | 暂存成片字节（原样保存，不重新编码） |
 | `GET` | `/api/staged` | 查询已暂存内容 |
+| `GET` | `/api/staged/image` | 取回暂存的图片 |
 | `DELETE` | `/api/staged` | 清除暂存 |
-| `POST` | `/api/print` | 打印已暂存的成片（**消耗相纸**） |
+| `POST` | `/api/print` | **开始打印**，立即返回任务对象（**消耗相纸**） |
+| `GET` | `/api/print/:id` | 查询任务状态 |
+| `GET` | `/api/print/:id/events` | 订阅进度（SSE） |
 
 ### 命令行参数
 
@@ -130,7 +140,7 @@ node verify-print.mjs <1200x1800.jpg> --yes-consume-one-sheet
 ## 测试
 
 ```bash
-npm test          # 54 项，全部离线运行，不需要打印机
+npm test          # 58 项，全部离线运行，不需要打印机
 npm run typecheck
 ```
 

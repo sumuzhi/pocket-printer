@@ -33,7 +33,7 @@
 你的程序                    本服务                 打印机
    │                          │                     │
    │  渲染成 1200×1800 JPEG   │                     │
-   ├──── POST /api/stage ────►│  暂存字节            │
+   ├──── POST /api/staged ────►│  暂存字节            │
    │                          │                     │
    ├──── POST /api/print ────►│  蓝牙 SPP ─────────►│  出纸
    │                          │                     │
@@ -52,7 +52,7 @@
 | 要求 | 检查方式 | 说明 |
 |---|---|---|
 | macOS | `uname` | 蓝牙经典串口只有 macOS 的 IOBluetooth 能访问 |
-| Node.js ≥ 22 | `node -v` | 直接运行 TypeScript，无需构建 |
+| Node.js ≥ 22 | `node -v` | 运行构建产物 |
 | Xcode 命令行工具 | `xcode-select -p` | 编译原生蓝牙模块 |
 | 已配对的打印机 | 见下 | 只需配对一次 |
 
@@ -255,14 +255,14 @@ await sharp('input.png')
 
 > **注意**：这个请求会阻塞数秒（连接 + 两次命令）。打印机不可达时最长约 15 秒。
 
-### `POST /api/stage`
+### `POST /api/staged`
 
 暂存成片。**不打印，不耗纸。**
 
 请求体是**原始 JPEG 字节**（不是 multipart）。
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/stage \
+curl -X POST http://127.0.0.1:8000/api/staged \
      -H 'content-type: image/jpeg' \
      -H 'X-Source-Name: photo.jpg' \
      --data-binary @sheet.jpg
@@ -305,40 +305,113 @@ curl -X POST http://127.0.0.1:8000/api/stage \
 
 ### `POST /api/print`
 
-**打印已暂存的成片。消耗一张相纸。**
+**开始打印已暂存的成片。消耗一张相纸。**
+
+**立即返回**（202），不等打印完成——一次打印约需 75 秒（4 秒传输 + 70 秒打印），
+让 HTTP 请求挂那么久会让客户端超时，也无法展示进度。
 
 ```bash
-curl -X POST http://127.0.0.1:8000/api/print \
-     -H 'content-type: application/json' \
-     -d '{"channel":"mac"}'
+curl -X POST http://127.0.0.1:8000/api/print
 ```
-
-成功：
 
 ```json
 {
-  "ok": true,
-  "message": "打印完成（任务 73）",
-  "job_id": 73,
-  "state": "finished",
-  "print_time": 70231
+  "id": "job-mv9i7lmz-fim4",
+  "sourceName": "photo.jpg",
+  "bytes": 501005,
+  "frames": 508,
+  "state": "queued",
+  "progress": 0,
+  "createdAt": 1792066645835
 }
 ```
 
-失败（HTTP 仍为 200，`ok: false`）：
-
-```json
-{ "ok": false, "message": "打印机不可达：请确认已开机" }
-```
+响应头带 `Location: /api/print/job-mv9i7lmz-fim4`。
 
 错误：
 
 | 状态 | 原因 |
 |---|---|
-| `400` | 未暂存 → `{"detail":"尚未暂存成片，请先导出并暂存"}` |
-| `400` | 通道未知 → `{"detail":"未知通道：xxx（本服务只提供本机蓝牙通道）"}` |
+| `400` | 未暂存 → `{"message":"尚未暂存成片，请先 POST /api/staged"}` |
+| `400` | 打印机忙 → `{"message":"打印机忙：正在处理任务 job-xxx"}` |
 
-**这个请求会阻塞约 75 秒**（4 秒传输 + 70 秒打印），直到任务完成。
+### `GET /api/print/:id`
+
+查询任务状态与进度。
+
+```json
+{
+  "id": "job-mv9i7lmz-fim4",
+  "state": "printing",
+  "progress": 0.5,
+  "bytes": 501005,
+  "frames": 508,
+  "printerJobId": 72,
+  "printTimeMs": 41230,
+  "startedAt": 1792066645836
+}
+```
+
+状态流转：
+
+| 状态 | 含义 |
+|---|---|
+| `queued` | 已接受，等待取用打印机 |
+| `transferring` | 正在传输成片（约 4 秒） |
+| `printing` | 打印机正在出纸（约 70 秒） |
+| `finished` | 完成 |
+| `failed` | 失败，`error` 字段说明原因 |
+
+失败示例：
+
+```json
+{
+  "state": "failed",
+  "error": "已配对的蓝牙设备都无法打开打印通道。请依次确认：\n  1. 打印机已开机…"
+}
+```
+
+### `GET /api/print/:id/events`
+
+以 **Server-Sent Events** 推送状态变化，无需轮询。订阅后立即收到当前状态，
+之后每秒推送一次直到任务进入终态。
+
+```bash
+curl -N http://127.0.0.1:8000/api/print/job-mv9i7lmz-fim4/events
+```
+
+```
+id: 1
+data: {"id":"job-...","state":"queued","progress":0,...}
+
+id: 2
+data: {"id":"job-...","state":"transferring","progress":0.1,...}
+
+id: 3
+data: {"id":"job-...","state":"printing","progress":0.5,...}
+
+id: 4
+data: {"id":"job-...","state":"finished","progress":1,...}
+```
+
+浏览器端示例：
+
+```js
+const es = new EventSource(`/api/print/${jobId}/events`)
+es.onmessage = (e) => {
+  const job = JSON.parse(e.data)
+  console.log(job.state, `${Math.round(job.progress * 100)}%`)
+  if (job.state === 'finished' || job.state === 'failed') es.close()
+}
+```
+
+### `GET /api/print`
+
+最近的任务列表（最多 50 条，已完成的任务保留 30 分钟）。
+
+```json
+{ "jobs": [ { "id": "job-...", "state": "finished" } ] }
+```
 
 ---
 
@@ -401,12 +474,11 @@ magick input.png -resize 1200x1800^ -gravity center -extent 1200x1800 \
        -quality 92 sheet.jpg
 
 # 4. 暂存（不打印）
-curl -X POST http://127.0.0.1:8000/api/stage \
+curl -X POST http://127.0.0.1:8000/api/staged \
      -H 'content-type: image/jpeg' --data-binary @sheet.jpg
 
 # 5. 打印（消耗一张相纸）
 curl -X POST http://127.0.0.1:8000/api/print \
-     -H 'content-type: application/json' -d '{"channel":"mac"}'
 ```
 
 第 4 步与第 5 步分开是有意的：暂存可以反复做（不耗纸），
@@ -480,13 +552,14 @@ npm run build:native
 服务端不做任何图像处理，**它打印的就是你交给它的字节**。检查：
 
 1. 成片是否真的是 1200×1800？`identify sheet.jpg`
-2. 是否先 `POST /api/stage` 再 `POST /api/print`？暂存的内容才是被打印的
+2. 是否先 `POST /api/staged` 再 `POST /api/print`？暂存的内容才是被打印的
 3. 是否在暂存后又生成了新图但忘了重新暂存？
 
 ### 请求卡住很久
 
 - `/api/printer/status` 在打印机不可达时最长阻塞约 15 秒（原生连接是同步的）
-- `/api/print` 会阻塞约 75 秒直到任务完成
+- `POST /api/print` **立即返回**（这是异步任务模型的目的）；
+  要等结果需轮询 `GET /api/print/:id` 或订阅 SSE
 
 ---
 
@@ -495,7 +568,7 @@ npm run build:native
 **相纸是消耗品。** 以下操作都不会打印，可以放心使用：
 
 ```bash
-# 协议层单元测试（54 项，纯函数，不接触硬件）
+# 全部单元测试（58 项：协议 41 + 接口 17，都不接触硬件）
 npm test
 
 # 类型检查
@@ -505,7 +578,7 @@ npm run typecheck
 curl http://127.0.0.1:8000/api/printer/status
 
 # 暂存成片（只写文件，不打印）
-curl -X POST http://127.0.0.1:8000/api/stage \
+curl -X POST http://127.0.0.1:8000/api/staged \
      -H 'content-type: image/jpeg' --data-binary @sheet.jpg
 ```
 
@@ -520,7 +593,7 @@ node verify-print.mjs sheet.jpg --yes-consume-one-sheet
 不带该参数时会被拒绝。
 
 打印链路已经完成验证（任务 71/72/73 均成功出纸），**通常没有再次运行的必要**。
-协议层有 54 项离线测试，逻辑正确性不需要真机。
+有 58 项离线测试（协议 41 + 接口 17），逻辑正确性不需要真机。
 
 ---
 
