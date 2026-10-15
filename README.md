@@ -217,6 +217,7 @@ Node 主线程跑 libuv 而非 CFRunLoop，所以朴素写法的插件**一个�
 | 文档 | 内容 |
 |---|---|
 | **[docs/USAGE.md](docs/USAGE.md)** | **使用指南：安装、接口参考、故障排查** |
+| **[docs/INTEGRATION.md](docs/INTEGRATION.md)** | **前后端联调：CORS、上传契约、异步打印、SSE** |
 | [docs/PROTOCOL.md](docs/PROTOCOL.md) | 帧格式、DH 握手、加密、分片 |
 | [docs/REVERSE-ENGINEERING.md](docs/REVERSE-ENGINEERING.md) | 协议还原过程与证据 |
 | [docs/VERIFICATION.md](docs/VERIFICATION.md) | 真机验证记录 |

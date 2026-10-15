@@ -61,6 +61,25 @@ export function configureApp(app: NestExpressApplication): void {
     limit: `${maxImageKb}kb`,
   })
 
+  // CORS for a front-end running on another origin (a dev server, typically).
+  //
+  // Off by default: the service is normally reached directly or from the same
+  // origin. It must be enabled for joint development, because EventSource (used
+  // by the SSE endpoint) cannot bypass CORS with custom headers the way fetch
+  // sometimes can — without these headers the progress stream simply fails.
+  const corsOrigins = config.getOrThrow<string[]>('corsOrigins')
+  if (corsOrigins.length > 0) {
+    app.enableCors({
+      origin: corsOrigins,
+      methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+      // `X-Source-Name` carries the file name for the staged image.
+      allowedHeaders: ['Content-Type', 'X-Source-Name'],
+      // SSE responses are text/event-stream; the browser reads them without
+      // exposing them, but the header keeps the intent explicit.
+      exposedHeaders: ['Location'],
+    })
+  }
+
   // One place decides how a domain error becomes an HTTP response.
   app.useGlobalFilters(new DomainExceptionFilter(maxImageKb))
 

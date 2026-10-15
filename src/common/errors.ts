@@ -37,9 +37,10 @@ export class ConflictError extends DomainError {
   }
 }
 
-/** The printer could not be reached, or refused the request. */
-export class PrinterUnavailableError extends DomainError {
-  constructor(message: string) {
-    super(message, 503)
-  }
-}
+// Note: there is deliberately no "printer unavailable" error type.
+//
+// A printer that cannot be reached is not a failed request: `GET
+// /api/printer/status` succeeds at probing and reports `reachable: false`, and
+// `POST /api/print` accepts the job and reports the failure asynchronously on
+// the job record. Neither should surface as an HTTP error, so no such error is
+// ever thrown.

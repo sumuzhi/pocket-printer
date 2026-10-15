@@ -18,6 +18,14 @@ export interface AppConfig {
   version: string
   /** Bytes accepted for one finished sheet (the plugin's 2048 KB default). */
   maxImageKb: number
+  /**
+   * Origins allowed to call the API from a browser.
+   *
+   * Empty by default: this service is meant to be reached directly or from a
+   * front-end on the same origin. A separate dev server (Vite, Next) needs its
+   * origin listed here, or the browser blocks every request.
+   */
+  corsOrigins: string[]
 }
 
 export const MAX_IMAGE_KB_DEFAULT = 2048
@@ -56,5 +64,9 @@ export function loadConfig(): AppConfig {
     printerAddress: process.env.PRINTER_ADDRESS || undefined,
     version: readVersion(),
     maxImageKb: num(process.env.MAX_IMAGE_KB, MAX_IMAGE_KB_DEFAULT),
+    corsOrigins: (process.env.CORS_ORIGINS ?? '')
+      .split(',')
+      .map((o) => o.trim())
+      .filter(Boolean),
   }
 }

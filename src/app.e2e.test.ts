@@ -202,6 +202,39 @@ describe('print guard', () => {
   })
 })
 
+describe('front-end integration', () => {
+  it('rejects a multipart upload with a hint, not a puzzling error', async () => {
+    // A front-end reaching for FormData is the most likely mistake: this
+    // endpoint takes the raw JPEG bytes, so a multipart envelope is not a JPEG.
+    // The contract is documented, and the status must at least be a clear 400.
+    const res = await request(app.getHttpServer())
+      .post('/api/staged')
+      .field('comment', 'not how this API works')
+      .attach('file', fakeJpeg(2048), 'sheet.jpg')
+      .expect(400)
+    expect(String(res.body.message)).toContain('JPEG')
+  })
+
+  it('exposes the job URL so a client can follow a print', async () => {
+    // 202 + Location is what lets a front-end poll without inventing an id.
+    await request(app.getHttpServer())
+      .post('/api/staged')
+      .set('content-type', 'image/jpeg')
+      .send(fakeJpeg())
+      .expect(200)
+
+    const saved = process.env.ALLOW_PRINTING
+    delete process.env.ALLOW_PRINTING
+    try {
+      const res = await request(app.getHttpServer()).post('/api/print').expect(409)
+      expect(String(res.body.message)).toContain('ALLOW_PRINTING')
+    } finally {
+      if (saved === undefined) delete process.env.ALLOW_PRINTING
+      else process.env.ALLOW_PRINTING = saved
+    }
+  })
+})
+
 describe('routing', () => {
   it('404s unknown API routes', async () => {
     await request(app.getHttpServer()).get('/api/nope').expect(404)

@@ -683,6 +683,7 @@ try {
 |---|---|
 | [README.md](../README.md) | 项目概览、限制、设计取舍 |
 | [PROTOCOL.md](PROTOCOL.md) | 帧格式、DH 握手、加密、分片（完整协议规格） |
+| [INTEGRATION.md](INTEGRATION.md) | 前后端联调指南 |
 | [REVERSE-ENGINEERING.md](REVERSE-ENGINEERING.md) | 协议还原过程与证据 |
 | [VERIFICATION.md](VERIFICATION.md) | 真机验证记录 |
 | [adr/](adr/) | 关键决策记录 |
