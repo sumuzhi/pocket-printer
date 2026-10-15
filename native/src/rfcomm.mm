@@ -62,6 +62,8 @@ static void EnsurePump() {
  */
 @property (nonatomic, assign) BOOL connectionFinished;
 @property (nonatomic, assign) IOReturn connectionStatus;
+/** RFCOMM 通道是否已真正关闭（由 closeChannel 的回调置真）。 */
+@property (nonatomic, assign) BOOL channelClosed;
 @end
 
 // ---------------------------------------------------------------------------
@@ -85,6 +87,16 @@ class Rfcomm : public Napi::ObjectWrap<Rfcomm> {
    * openRFCOMMChannelSync 随即超时（实测 0x3758097084）。
    */
   BtDelegate* connDelegate_ = nil;
+
+  /**
+   * 已连接的设备。
+   *
+   * 必须持有，否则 Close() 无法断开基带：closeChannel 只关闭 RFCOMM 通道，
+   * 基带连接会一直挂在系统里。结果是**第二次连接起必然失败**
+   * （openRFCOMMChannelSync 0x3758097084），而 isConnected 依然为真 ——
+   * 表现为「明明已经连上却报错」，且不重启打印机无法恢复。
+   */
+  IOBluetoothDevice* device_ = nil;
 
   Napi::Value Connect(const Napi::CallbackInfo& info);
   Napi::Value Write(const Napi::CallbackInfo& info);
@@ -110,6 +122,7 @@ class Rfcomm : public Napi::ObjectWrap<Rfcomm> {
 // device. Do not "simplify" this signature.
 - (void)rfcommChannelClosed:(IOBluetoothRFCOMMChannel*)ch {
   (void)ch;
+  self.channelClosed = YES;
   if (self.owner) self.owner->OnClosed();
 }
 - (void)rfcommChannelWriteComplete:(IOBluetoothRFCOMMChannel*)ch
@@ -219,6 +232,9 @@ Napi::Value Rfcomm::Connect(const Napi::CallbackInfo& info) {
     }
   }
 
+  // 记下设备，供 Close() 断开基带。
+  device_ = device;
+
   // 2) RFCOMM channel.
   delegate_ = [[BtDelegate alloc] init];
   delegate_.owner = this;
@@ -266,9 +282,60 @@ Napi::Value Rfcomm::GetMtu(const Napi::CallbackInfo& info) {
 
 Napi::Value Rfcomm::Close(const Napi::CallbackInfo& info) {
   if (channel_ != nil) {
+    /*
+     * closeChannel 是异步的：它发出断开请求就返回，通道要过一会儿才真正释放。
+     *
+     * 不等待的后果实测很明显 —— 关闭后立即重连：
+     *   不等待  → 4 次里成功 2 次
+     *   等 1 秒 → 3 次
+     *   等 3 秒 → 4 次
+     * 失败表现为 openRFCOMMChannelSync 超时，或通道开了但打印机不响应握手
+     * （「未收到 SERVER_HELLO_DH」）—— 正是用户报告的「已经连上了却报错」。
+     *
+     * rfcommChannelClosed 委托回调是判断关闭完成的准确信号，这里等它，
+     * 最多 3 秒。
+     */
+    if (delegate_ != nil) delegate_.channelClosed = NO;
     [channel_ closeChannel];
     channel_ = nil;
+
+    if (delegate_ != nil) {
+      NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:3.0];
+      while (!delegate_.channelClosed && [deadline timeIntervalSinceNow] > 0) {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, true);
+      }
+    }
   }
+
+  /*
+   * 断开基带，并等它真的断开。
+   *
+   * 只关 RFCOMM 是不够的：基带连接留在系统里，打印机侧也认为连接还在，
+   * 于是**下一次 openRFCOMMChannelSync 超时**（0x3758097084），或者通道
+   * 虽然打开但打印机不响应握手（「未收到 SERVER_HELLO_DH」）——
+   * 这正是「明明已经连上了却报错」的成因。
+   *
+   * 关键是 closeConnection **不等断开完成**：实测它返回 kIOReturnSuccess 时
+   * isConnected 仍为 1，约 1 秒后才变为 0。所以必须在这里等，
+   * 否则下一次连接会撞上一个正在断开的基带。
+   *
+   * 等待上限 3 秒（实测约 1 秒完成）。
+   */
+  if (device_ != nil) {
+    if ([device_ isConnected]) {
+      [device_ closeConnection];
+
+      NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:3.0];
+      while ([device_ isConnected] && [deadline timeIntervalSinceNow] > 0) {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, true);
+      }
+    }
+    device_ = nil;
+  }
+
+  // 占着委托不放会让下一次连接的连接状态判断错乱。
+  connDelegate_ = nil;
+
   return info.Env().Undefined();
 }
 

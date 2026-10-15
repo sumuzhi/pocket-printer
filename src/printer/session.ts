@@ -100,7 +100,37 @@ export class PrintSession {
     await this.handshake()
   }
 
+  /**
+   * DH 握手，失败时重建通道重试一次。
+   *
+   * 针对一个实测到的偶发现象：RFCOMM 通道显示已打开，但打印机没有回应
+   * CLIENT_HELLO_DH。压力测试 12 次里约 1 次如此。
+   *
+   * **关键**：此时在同一条通道上重发 hello 是没用的（实测等满 13 秒仍失败）
+   * —— 那条通道已经死了，尽管 `openRFCOMMChannelSync` 报了成功。
+   * 必须把通道和基带一起拆掉重建，才有干净的连接可用。
+   *
+   * 只重试一次：打印机真的不可用时（休眠、被手机占用）不该反复拖时间。
+   */
   private async handshake(): Promise<void> {
+    try {
+      await this.handshakeOnce()
+      return
+    } catch (e) {
+      const retriable = e instanceof PrinterError && e.message.includes('未收到 SERVER_HELLO_DH')
+      if (!retriable) throw e
+
+      if (this.verbose) {
+        process.stderr.write('  握手未获回应，重建连接后重试…\n')
+      }
+      // 拆掉死掉的通道，否则重连会撞上它。
+      await this.link.close().catch(() => {})
+      await this.link.open()
+      await this.handshakeOnce()
+    }
+  }
+
+  private async handshakeOnce(): Promise<void> {
     const hello = buildFrame({
       channel: CH_AUTH,
       interaction: INT_CLIENT_HELLO_DH,
@@ -110,7 +140,9 @@ export class PrintSession {
     })
     await this.link.write(hello)
 
-    const [reply] = await this.link.recv(1, 10_000)
+    // 第一次等 6 秒；打印机正常时在 100ms 内就会回应，等满 10 秒
+    // 只是在为一次丢包付出代价。
+    const [reply] = await this.link.recv(1, 6_000)
     if (!reply || reply.channel !== CH_AUTH || reply.interaction !== INT_SERVER_HELLO_DH) {
       throw new PrinterError('未收到 SERVER_HELLO_DH —— 打印机未响应握手')
     }
