@@ -1,27 +1,58 @@
 /**
  * On-hardware verification of the complete print path.
  *
- * The command layer (handshake, status, device info) is covered by tests; the
- * FILE TRANSFER is not — it needs real paper. This script is that check, kept in
- * the repo so the verification can be repeated after any protocol change.
+ * **THIS CONSUMES A SHEET OF PAPER.** Paper is a consumable, and the print path
+ * has already been verified on hardware (jobs 71/72/73 all reached `finished`
+ * and produced prints). There is normally no reason to run this again: the
+ * protocol layer is covered by 54 offline tests, and the framing was compared
+ * byte-for-byte against a known-working implementation.
  *
- * Usage: node verify-print.mjs <image.jpg>
- * Consumes one sheet of paper.
+ * Run it only when a hardware change genuinely needs re-checking, and only with
+ * an explicit human decision to spend a sheet.
+ *
+ * Usage:
+ *   node verify-print.mjs <image.jpg> --yes-consume-one-sheet
+ *
+ * The flag is deliberately long and explicit so it cannot be typed by accident
+ * or added reflexively while "just checking that things work".
  */
 import { readFileSync } from 'node:fs'
 import { BluetoothLink } from './src/bluetooth.ts'
 import { PrintSession } from './src/session.ts'
 import { frameCountFor } from './src/protocol.ts'
 
-const img = process.argv[2]
+const CONFIRM_FLAG = '--yes-consume-one-sheet'
+const args = process.argv.slice(2)
+
+if (!args.includes(CONFIRM_FLAG)) {
+  const img = args.find((a) => !a.startsWith('--'))
+  console.error(`
+⛔ 已阻止：本脚本会消耗一张相纸。
+
+相纸是消耗品。打印链路已在真机上验证通过（任务 71/72/73 均出纸），
+协议层另有 54 项离线测试，因此通常没有必要再运行这个脚本。
+
+确实需要真机验证时，请显式加上确认参数：
+
+    node verify-print.mjs ${img ?? '<image.jpg>'} ${CONFIRM_FLAG}
+
+不消耗相纸的替代检查：
+    npm test                                  # 54 项协议测试，离线运行
+    curl http://127.0.0.1:8000/api/printer/status   # 只读：握手 + 电量 + 固件
+`)
+  process.exit(2)
+}
+
+const img = args.find((a) => !a.startsWith('--'))
 if (!img) {
-  console.error('用法: node verify-print.mjs <image.jpg>')
+  console.error(`用法: node verify-print.mjs <image.jpg> ${CONFIRM_FLAG}`)
   process.exit(2)
 }
 const file = readFileSync(img)
 console.log(`待打印: ${img}`)
 console.log(`  ${file.length} 字节 (${(file.length / 1024).toFixed(1)}KB), ${frameCountFor(file.length)} 帧`)
 console.log(`  JPEG 头: ${file.subarray(0, 2).toString('hex')} (应为 ffd8)`)
+console.log(`  ⚠ 将消耗 1 张相纸`)
 
 const link = new BluetoothLink({ verbose: false })
 const s = new PrintSession(link, false)

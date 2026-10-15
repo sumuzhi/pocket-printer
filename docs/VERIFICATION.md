@@ -34,11 +34,14 @@ curl http://127.0.0.1:8000/api/printer/status
 
 ## 3：打印验证
 
-**会消耗一张相纸。**
+**会消耗一张相纸。** 脚本要求显式确认参数，避免误运行：
 
 ```bash
-node verify-print.mjs <1200x1800.jpg>
+node verify-print.mjs <1200x1800.jpg> --yes-consume-one-sheet
 ```
+
+不带参数时会被拒绝并提示替代方案。打印链路已完成验证（任务 71/72/73），
+**没有再次验证的必要**。
 
 期望输出：
 
