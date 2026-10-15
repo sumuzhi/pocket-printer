@@ -162,9 +162,14 @@ ColorModes(3, 1)                          // COLOR | MONO
 
 ## 7. 独立 App 的设计结论
 
-### 7.1 可以不依赖米家 App 的部分
+### 7.1 曾探索的云路径（**本项目未采用**）
 
-`print_job` 是一次标准 **MiIO 云 RPC**，经由
+> ⚠️ **本节记录的是当时评估过、但最终放弃的方案。**
+> 走云端需要小米账号会话（`userId` / `passToken` / `ssecurity`）。
+> 本项目改用**蓝牙直连**，**不需要账号、不需要 token**——
+> 见 [7.3](#73-本项目的实现) 与 [PROTOCOL.md](PROTOCOL.md)。
+
+`print_job` 也可以通过标准 **MiIO 云 RPC** 完成，经由
 `XmPluginHostApi.callMethod(did, method, params)` → `PluginHostApiImpl` →
 `doSpecRequest` / `callMethodFromCloud`。它只需要：
 
@@ -224,10 +229,12 @@ ColorModes(3, 1)                          // COLOR | MONO
 - PUT 响应的 FDS 字段名由 `it9.OooOoOO()` 确认：
   `accessKeyId` / `bucketName` / `expires` / `objectName` / `signature`。
 
-**仍未验证**：`print_job` 这一步。它需要：
+**云路径下的 `print_job` 未验证**（本项目改用蓝牙后已无此需求）。
+当时评估它需要：
 
 1. 米家账号会话：`userId`、`passToken`、`ssecurity`
-2. 打印机 `did` 与型号确认（`hannto.printer.honey`）
-3. 一台已绑定该账号的口袋打印机Pro
+2. 打印机 `did` 与型号确认
+3. 一台已绑定该账号的打印机
 
-拿到这三项即可跑 `list` → `status` → `print` 完整链路。
+**这些凭证本项目完全不需要。** 蓝牙路径下，打印只需设备已配对，
+无需账号、无需 token、无需 did。
