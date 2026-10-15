@@ -183,6 +183,21 @@ export class PrinterService {
    * `POST /api/print` that held the request open for ~75 seconds.
    */
   startPrint(imagePath: string, sourceName: string): PrintJob {
+    // Guard against accidental printing.
+    //
+    // A print consumes a sheet of paper and cannot be undone, and this service
+    // is easy to poke at from a script or a test. Unless ALLOW_PRINTING is set,
+    // starting a job is refused — so an automated check that happens to call
+    // POST /api/print cannot cost paper. The HTTP caller that genuinely wants to
+    // print opts in explicitly.
+    if (process.env.ALLOW_PRINTING !== '1') {
+      throw new ConflictError(
+        '打印已被禁用（未设置 ALLOW_PRINTING=1）。' +
+          '本服务默认拒绝启动打印任务，以免测试或脚本误触发而浪费相纸。' +
+          '确实要打印时，用 ALLOW_PRINTING=1 启动服务。',
+      )
+    }
+
     if (this.activeJob) {
       throw new ConflictError(`打印机忙：正在处理任务 ${this.activeJob}`)
     }

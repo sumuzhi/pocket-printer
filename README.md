@@ -22,17 +22,21 @@
 
 ```bash
 npm install          # 会自动编译原生蓝牙模块
-npm run build        # NestJS 需要构建（装饰器元数据无法由类型擦除生成）
-npm start            # http://127.0.0.1:8000
+npm run start:dev    # 开发模式，改动自动重启 → http://127.0.0.1:8000
+
+# 或生产方式
+npm run build && npm run start:prod
 ```
 
-开发时用 `npm run dev`：监听源码改动、增量编译、**自动重启服务**。
+命令遵循 NestJS 官方模板约定：
 
 | 命令 | 用途 |
 |---|---|
-| `npm run build` | 构建一次（清空 `dist/` 后编译） |
-| `npm start` | 启动构建产物；未构建时给出可操作的提示 |
-| `npm run dev` | 开发模式：监听改动 + 自动重启 |
+| `npm run build` | 构建（`nest build`） |
+| `npm start` | 运行（`nest start`，会先编译） |
+| **`npm run start:dev`** | **开发模式：监听改动 + 自动重启** |
+| `npm run start:debug` | 同上，并开启调试器 |
+| `npm run start:prod` | 运行构建产物（`node dist/main`） |
 | `npm test` | 58 项测试，离线运行 |
 
 启动时会自动发现打印机：
@@ -145,6 +149,19 @@ node verify-print.mjs <1200x1800.jpg> --yes-consume-one-sheet
 
 协议层另有与 Swift 实现的**逐字节对比**：握手帧、AES 块、1014 字节的加密文件帧等
 5 个用例全部一致。
+
+## 防止误打印
+
+相纸是消耗品，一次打印无法撤销。因此**启动打印任务需要显式开启**：
+
+```bash
+ALLOW_PRINTING=1 npm run start:dev
+```
+
+未设置 `ALLOW_PRINTING=1` 时，`POST /api/print` 会返回 409 并说明原因，
+**不会创建任务、不会接触打印机**。这样测试、脚本或误点的请求都不会浪费相纸。
+
+只读操作（状态查询、暂存）不受影响，无需该变量。
 
 ## 测试
 

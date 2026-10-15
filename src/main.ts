@@ -15,15 +15,21 @@ import { ConfigService } from '@nestjs/config'
 import { createApplication } from './bootstrap.ts'
 import { addonBuilt, listCandidates } from './printer/bluetooth.ts'
 
+/**
+ * CLI overrides. Fields are optional on purpose: an absent flag must leave the
+ * environment (and hence ConfigModule's defaults) in charge. Giving them
+ * defaults here previously clobbered `PORT` with 8000 even when the caller had
+ * set it.
+ */
 interface Args {
-  port: number
-  host: string
+  port?: number
+  host?: string
   address?: string
   verbose: boolean
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { port: 8000, host: '127.0.0.1', verbose: false }
+  const args: Args = { verbose: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     if (a === '--port') args.port = Number(argv[++i])
@@ -50,11 +56,13 @@ function parseArgs(argv: string[]): Args {
 async function bootstrap(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
 
-  // CLI flags take precedence over the environment. They are written back into
-  // `process.env` before the module is created, because `ConfigModule.forRoot`
-  // reads the environment exactly once at startup.
+  // CLI flags take precedence over the environment, and only when actually
+  // given: they are written into `process.env` before the module is created
+  // because `ConfigModule.forRoot` reads the environment once at startup.
+  // Assigning a default here would override a value the caller set via the
+  // environment, which is the opposite of "flags take precedence".
   if (args.address) process.env.PRINTER_ADDRESS = args.address
-  if (args.port) process.env.PORT = String(args.port)
+  if (args.port !== undefined) process.env.PORT = String(args.port)
   if (args.host) process.env.HOST = args.host
   if (args.verbose) process.env.VERBOSE = '1'
 

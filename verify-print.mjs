@@ -17,9 +17,11 @@
  * or added reflexively while "just checking that things work".
  */
 import { readFileSync } from 'node:fs'
-import { BluetoothLink } from './src/bluetooth.ts'
-import { PrintSession } from './src/session.ts'
-import { frameCountFor } from './src/protocol.ts'
+// These three modules are plain TypeScript (no decorators), so Node's type
+// stripping runs them directly — the build is only needed for the Nest layer.
+import { BluetoothLink } from './src/printer/bluetooth.ts'
+import { PrintSession } from './src/printer/session.ts'
+import { frameCountFor } from './src/printer/protocol.ts'
 
 const CONFIRM_FLAG = '--yes-consume-one-sheet'
 const args = process.argv.slice(2)
@@ -30,14 +32,14 @@ if (!args.includes(CONFIRM_FLAG)) {
 ⛔ 已阻止：本脚本会消耗一张相纸。
 
 相纸是消耗品。打印链路已在真机上验证通过（任务 71/72/73 均出纸），
-协议层另有 54 项离线测试，因此通常没有必要再运行这个脚本。
+另有 75 项离线测试，因此通常没有必要再运行这个脚本。
 
 确实需要真机验证时，请显式加上确认参数：
 
     node verify-print.mjs ${img ?? '<image.jpg>'} ${CONFIRM_FLAG}
 
 不消耗相纸的替代检查：
-    npm test                                  # 54 项协议测试，离线运行
+    npm test                                  # 75 项测试，离线运行
     curl http://127.0.0.1:8000/api/printer/status   # 只读：握手 + 电量 + 固件
 `)
   process.exit(2)

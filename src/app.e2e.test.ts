@@ -169,6 +169,33 @@ describe('print guard', () => {
     await request(app.getHttpServer()).get('/api/print/does-not-exist').expect(404)
   })
 
+  it('refuses to start a job when printing is not explicitly enabled', async () => {
+    // Paper is a consumable and a print cannot be undone, so starting a job
+    // requires an explicit opt-in. Without ALLOW_PRINTING=1 an automated check
+    // that pokes POST /api/print cannot cost a sheet.
+    //
+    // Staging first is deliberate: it proves the refusal comes from the print
+    // gate and not from the "nothing staged" check.
+    await request(app.getHttpServer())
+      .post('/api/staged')
+      .set('content-type', 'image/jpeg')
+      .send(fakeJpeg())
+      .expect(200)
+
+    const saved = process.env.ALLOW_PRINTING
+    delete process.env.ALLOW_PRINTING
+    try {
+      const res = await request(app.getHttpServer()).post('/api/print').expect(409)
+      expect(String(res.body.message)).toContain('ALLOW_PRINTING')
+      // No job must have been created.
+      const jobs = await request(app.getHttpServer()).get('/api/print').expect(200)
+      expect(jobs.body.jobs).toHaveLength(0)
+    } finally {
+      if (saved === undefined) delete process.env.ALLOW_PRINTING
+      else process.env.ALLOW_PRINTING = saved
+    }
+  })
+
   it('lists jobs (empty when nothing ran in this app instance)', async () => {
     const res = await request(app.getHttpServer()).get('/api/print').expect(200)
     expect(Array.isArray(res.body.jobs)).toBe(true)

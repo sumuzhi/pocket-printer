@@ -88,41 +88,30 @@ npm install
 npm run build:native
 ```
 
-### 三个常用命令
+### 命令
+
+遵循 NestJS 官方模板约定：
 
 | 命令 | 用途 |
 |---|---|
-| `npm run build` | 构建一次（先清空 `dist/`） |
-| `npm start` | 启动构建产物 |
-| `npm run dev` | 开发模式：监听改动并自动重启 |
+| **`npm run start:dev`** | **开发模式：监听改动并自动重启** |
+| `npm run build` | 生产构建（`nest build`） |
+| `npm start` | 运行（`nest start`，会先编译） |
+| `npm run start:debug` | 同上并开启调试器 |
+| `npm run start:prod` | 运行构建产物（`node dist/main`） |
 | `npm test` | 58 项测试，不需要打印机 |
 
-**为什么需要构建**：NestJS 通过 `design:paramtypes` 元数据解析依赖注入，
-而该元数据只能由 `tsc` 生成——Node 的类型擦除与 esbuild 都会丢弃它
-（实测：带装饰器的 `.ts` 直接运行会报错）。因此开发模式也用 `tsc --watch`，
-而不是直接运行 TypeScript。
-
-未构建就执行 `npm start` 会给出提示而不是堆栈：
-
-```
-未找到构建产物 dist/main.js
-
-NestJS 依赖装饰器元数据，需要先构建：
-
-    npm run build     # 构建一次
-    npm start         # 然后启动
-
-开发时用以下命令，它会监听改动并自动重启：
-
-    npm run dev
-```
+**为什么需要编译**：NestJS 通过 `design:paramtypes` 元数据解析依赖注入，
+而该元数据需要 TypeScript 编译器生成——Node 的类型擦除与 esbuild 都会丢弃它。
+因此即便开发模式也经过编译（`nest start --watch` 内部即 `tsc -w` + 重启），
+只是这个过程由框架管理，无需手动执行。
 
 ---
 
 ## 快速开始
 
 ```bash
-npm start
+npm run start:dev
 ```
 
 启动后输出：
@@ -336,6 +325,15 @@ curl -X POST http://127.0.0.1:8000/api/staged \
 
 **开始打印已暂存的成片。消耗一张相纸。**
 
+> **需要显式开启打印。** 服务默认拒绝启动打印任务，必须先设
+> `ALLOW_PRINTING=1` 启动，否则返回 409：
+>
+> ```bash
+> ALLOW_PRINTING=1 npm run start:dev
+> ```
+>
+> 这样测试、脚本或误触的请求都不会浪费相纸。只读操作不受影响。
+
 **立即返回**（202），不等打印完成——一次打印约需 75 秒（4 秒传输 + 70 秒打印），
 让 HTTP 请求挂那么久会让客户端超时，也无法展示进度。
 
@@ -456,11 +454,20 @@ node src/index.ts [选项]
   --help           显示帮助
 ```
 
-`--address` 也接受环境变量：
+配置优先用环境变量（对三种启动方式都有效）：
+
+| 变量 | 作用 | 默认 |
+|---|---|---|
+| `PORT` | 监听端口 | `8000` |
+| `HOST` | 监听地址 | `127.0.0.1` |
+| `PRINTER_ADDRESS` | 指定打印机地址，跳过自动发现 | 空（自动发现） |
+| `MAX_IMAGE_KB` | 成片大小上限 | `2048` |
 
 ```bash
-PRINTER_ADDRESS=f0-13-c1-xx-xx-xx npm start
+PRINTER_ADDRESS=f0-13-c1-xx-xx-xx PORT=8080 npm run start:dev
 ```
+
+**优先级**：CLI 参数 > 环境变量 > 默认值。但见下方关于 `nest start` 吞参数的说明。
 
 ---
 
@@ -481,8 +488,17 @@ PRINTER_ADDRESS=f0-13-c1-xx-xx-xx npm start
 - 自动发现因权限等原因失败
 
 ```bash
-npm start -- --address f0-13-c1-xx-xx-xx
+# 用环境变量（推荐）
+PRINTER_ADDRESS=f0-13-c1-xx-xx-xx npm start
+
+# 或用运行构建产物的方式传 CLI 参数
+npm run build && npm run start:prod -- --address f0-13-c1-xx-xx-xx
 ```
+
+> **注意**：`npm start -- --address ...` **不可用**。`npm start` 底层是
+> `nest start`，它会吞掉 `--` 之后的参数，CLI 参数传不到应用。
+> 需要 CLI 参数时用 `start:prod`（等价于 `node dist/main`），或直接用上面
+> 的环境变量。
 
 地址格式为 `aa-bb-cc-dd-ee-ff`（小写、连字符分隔）。
 
@@ -506,7 +522,7 @@ magick input.png -resize 1200x1800^ -gravity center -extent 1200x1800 \
 curl -X POST http://127.0.0.1:8000/api/staged \
      -H 'content-type: image/jpeg' --data-binary @sheet.jpg
 
-# 5. 打印（消耗一张相纸）
+# 5. 打印（消耗一张相纸；需 ALLOW_PRINTING=1 启动服务）
 curl -X POST http://127.0.0.1:8000/api/print \
 ```
 
