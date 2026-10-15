@@ -49,6 +49,19 @@ static void EnsurePump() {
 // ---------------------------------------------------------------------------
 @interface BtDelegate : NSObject <IOBluetoothRFCOMMChannelDelegate>
 @property (nonatomic, assign) Rfcomm* owner;
+/**
+ * 基带连接完成的回调。
+ *
+ * 之所以用回调形式（openConnection:target:）而不是同步的 openConnection：
+ * 后者是同步阻塞的，且**实测页超时参数无效** —— 对一个不可达的设备，
+ * 无论把 pageTimeout 设成 1 秒还是 6.25 秒，它都固定阻塞 15.38 秒
+ * （IOBluetooth 栈内部的固定行为）。
+ *
+ * 异步形式立即返回，于是我们可以在自己的预算内主动放弃，
+ * 而不是被栈内部的 15 秒钉住事件循环。
+ */
+@property (nonatomic, assign) BOOL connectionFinished;
+@property (nonatomic, assign) IOReturn connectionStatus;
 @end
 
 // ---------------------------------------------------------------------------
@@ -64,6 +77,15 @@ class Rfcomm : public Napi::ObjectWrap<Rfcomm> {
   void OnClosed();
 
  private:
+  /**
+   * 基带连接用的委托。
+   *
+   * **必须是成员而不是局部变量**：openConnection:target: 是异步的，
+   * 委托释放后连接就失去接管者 —— 表现为基带已连上但
+   * openRFCOMMChannelSync 随即超时（实测 0x3758097084）。
+   */
+  BtDelegate* connDelegate_ = nil;
+
   Napi::Value Connect(const Napi::CallbackInfo& info);
   Napi::Value Write(const Napi::CallbackInfo& info);
   Napi::Value Close(const Napi::CallbackInfo& info);
@@ -94,6 +116,16 @@ class Rfcomm : public Napi::ObjectWrap<Rfcomm> {
                             refcon:(void*)refcon
                             status:(IOReturn)error {
   (void)ch; (void)refcon; (void)error;
+}
+/**
+ * 基带连接完成。见头文件里 connectionFinished 的说明：
+ * 用异步形式才能在预算内主动放弃，而不是被 IOBluetooth 内部的
+ * 15 秒固定超时钉住事件循环。
+ */
+- (void)connectionComplete:(IOBluetoothDevice*)device status:(IOReturn)status {
+  (void)device;
+  self.connectionFinished = YES;
+  self.connectionStatus = status;
 }
 @end
 
@@ -139,15 +171,49 @@ Napi::Value Rfcomm::Connect(const Napi::CallbackInfo& info) {
   }
 
   // 1) Baseband connection first.
+  //
+  // `openConnection` is synchronous and blocks until the CREATE_CONNECTION
+  // command completes, using the **default page timeout** — measured at about
+  // 30 seconds against an unreachable device. The 15s deadline below used to be
+  // armed *after* that call returned, so it never bounded anything: a probe
+  // against a sleeping printer held the Node event loop for the full 30s, and
+  // with several paired candidates a single status check took over a minute
+  // while every other request was stalled.
+  //
+  // `openConnection:withPageTimeout:authenticationRequired:` lets us pass the
+  // page timeout explicitly. The unit is 0.625 ms, so 8000 ticks ≈ 5s — enough
+  // for a printer that is awake (a healthy connection takes well under a
+  // second) and short enough that a sleeping one fails fast.
   if (![device isConnected]) {
-    IOReturn cr = [device openConnection];
-    NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:15.0];
-    while (![device isConnected] && [deadline timeIntervalSinceNow] > 0) {
-      CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.1, true);
+    /*
+     * 用**异步**形式发起连接，然后在自己的预算内等待。
+     *
+     * 为什么不用同步的 openConnection：它固定阻塞 15.38 秒才失败，而且
+     * 实测 pageTimeout 参数对它毫无影响 —— 从 1 秒到 6.25 秒的标称值，
+     * 实测一律 15.38 秒（IOBluetooth 栈内部的固定行为）。异步形式立即返回，
+     * 于是可以在预算用完时主动 closeConnection 放弃。
+     *
+     * 预算是 3 秒：健康连接实测 0.7~0.8 秒，留了 4 倍余量；而打印机休眠时
+     * 不再让整个 Node 事件循环冻结 15 秒（那期间所有 HTTP 请求都会卡住）。
+     */
+    connDelegate_ = [[BtDelegate alloc] init];
+    connDelegate_.owner = this;
+    [device openConnection:connDelegate_];
+
+    const double kConnectBudget = 3.0;
+    NSDate* deadline = [NSDate dateWithTimeIntervalSinceNow:kConnectBudget];
+    while (![device isConnected] && !connDelegate_.connectionFinished &&
+           [deadline timeIntervalSinceNow] > 0) {
+      CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, true);
     }
+
     if (![device isConnected]) {
-      Napi::Error::New(env, "printer unreachable (openConnection 0x" +
-                                std::to_string((unsigned)cr) + ")")
+      // 主动取消仍在进行的连接，避免它稍后突然连上而无人接管。
+      [device closeConnection];
+      Napi::Error::New(env,
+                       "printer unreachable (连接超时 " +
+                           std::to_string(kConnectBudget) +
+                           "s；打印机可能已休眠，按一下按钮唤醒)")
           .ThrowAsJavaScriptException();
       return env.Undefined();
     }
